@@ -1,0 +1,8 @@
+{
+  "name": "Aria - Your AI Fashion Architect",
+  "description": "A high-end personal stylist assistant featuring a real-time conversational 3D designer avatar powered by Gemini Live API.",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation"
+  ]
+}
