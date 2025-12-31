@@ -39,7 +39,6 @@ const App: React.FC = () => {
       inputAnalyzerRef.current = inAnalyzer;
     }
     
-    // Explicitly resume for browser security compliance
     if (audioContextRef.current.state === 'suspended') await audioContextRef.current.resume();
     if (outputAudioContextRef.current.state === 'suspended') await outputAudioContextRef.current.resume();
   };
@@ -107,7 +106,7 @@ const App: React.FC = () => {
   const connectToAria = async () => {
     const key = process.env.API_KEY;
     if (!key) {
-      console.error("API_KEY is not defined in the environment.");
+      console.error("API_KEY environment variable is missing.");
       setAppState(AppState.ERROR);
       return;
     }
@@ -191,7 +190,7 @@ const App: React.FC = () => {
             }
           },
           onerror: (e) => {
-            console.error("Gemini Live Error:", e);
+            console.error("Gemini Handshake Error:", e);
             setAppState(AppState.ERROR);
           },
           onclose: () => setAppState(AppState.IDLE)
@@ -199,9 +198,9 @@ const App: React.FC = () => {
         config: {
           responseModalities: [Modality.AUDIO],
           tools: [{ functionDeclarations: [displayOutfitFunctionDeclaration] }],
-          systemInstruction: `You are Aria, a high-end AI fashion architect. 
-          Location: ${location}. You specialize in Cyber-Couture. 
-          Speak with high-status elegance. Always call 'displayOutfitSuggestion' when proposing a look.`,
+          systemInstruction: `You are Aria, a world-class AI fashion architect. 
+          Location: ${location}. Speak with high-status elegance and futuristic flair. 
+          Call 'displayOutfitSuggestion' whenever you recommend a look.`,
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } }
           },
@@ -211,7 +210,7 @@ const App: React.FC = () => {
 
       sessionRef.current = await sessionPromise;
     } catch (err) {
-      console.error("Connection failed:", err);
+      console.error("Initialization Failed:", err);
       setAppState(AppState.ERROR);
     }
   };
@@ -230,7 +229,6 @@ const App: React.FC = () => {
     <div className="relative h-screen w-screen bg-[#050505] overflow-hidden font-sans">
       <AvatarCanvas isSpeaking={appState === AppState.SPEAKING} amplitude={amplitude} />
 
-      {/* Header UI */}
       <div className="absolute top-0 w-full p-8 flex justify-between items-start z-20 pointer-events-none">
         <div className="pointer-events-auto">
           <h1 className="text-4xl font-black tracking-tighter italic text-white/90">ARIA <span className="text-gold text-sm not-italic font-light ml-2 uppercase tracking-[0.4em]">Designer Unit</span></h1>
@@ -245,7 +243,6 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* Neural Stream UI (Left) */}
       <div className="absolute left-8 top-1/2 -translate-y-1/2 w-80 z-30 pointer-events-none">
         {transcription && (
           <div className="bg-black/80 backdrop-blur-3xl border-l-2 border-gold p-6 rounded-r-3xl animate-in fade-in slide-in-from-left-4 duration-500 pointer-events-auto shadow-2xl">
@@ -255,7 +252,6 @@ const App: React.FC = () => {
         )}
       </div>
 
-      {/* Outfit Manifest Card (Right) */}
       {currentOutfit && (
         <div className="absolute right-8 top-1/2 -translate-y-1/2 w-80 z-30 animate-in slide-in-from-right-4 fade-in duration-500">
           <div className="bg-black/80 backdrop-blur-3xl border border-gold/30 rounded-3xl overflow-hidden shadow-[0_0_50px_rgba(212,175,55,0.15)]">
@@ -281,7 +277,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Control Panel (Bottom) */}
       <div className="absolute bottom-8 w-full flex flex-col items-center gap-4 z-40 px-8">
         {(appState === AppState.LISTENING || appState === AppState.SPEAKING) && (
           <div className="flex gap-1 items-end h-10 mb-2">
