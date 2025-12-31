@@ -23,7 +23,6 @@ const App: React.FC = () => {
   const inputAnalyzerRef = useRef<AnalyserNode | null>(null);
 
   const initAudio = async () => {
-    // Standardize initialization for cross-browser support
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
     
     if (!audioContextRef.current) {
@@ -40,7 +39,7 @@ const App: React.FC = () => {
       inputAnalyzerRef.current = inAnalyzer;
     }
     
-    // CRITICAL: Resume contexts within the click handler to satisfy browser autoplay policies
+    // Explicitly resume for browser security compliance
     if (audioContextRef.current.state === 'suspended') await audioContextRef.current.resume();
     if (outputAudioContextRef.current.state === 'suspended') await outputAudioContextRef.current.resume();
   };
@@ -94,24 +93,30 @@ const App: React.FC = () => {
       type: Type.OBJECT,
       description: 'Displays a high-fashion outfit manifest card to the user.',
       properties: {
-        top: { type: Type.STRING, description: 'Upper body piece (e.g. Chrome-plated bomber jacket)' },
-        bottom: { type: Type.STRING, description: 'Lower body piece (e.g. Pleated iridium trousers)' },
-        footwear: { type: Type.STRING, description: 'Shoes (e.g. Gravity-defying boots)' },
-        accessories: { type: Type.ARRAY, items: { type: Type.STRING }, description: '2-3 futuristic accessories' },
-        colorPalette: { type: Type.ARRAY, items: { type: Type.STRING }, description: 'Colors in hex' },
-        vibe: { type: Type.STRING, description: 'Overall style aesthetic' },
+        top: { type: Type.STRING, description: 'Upper body piece' },
+        bottom: { type: Type.STRING, description: 'Lower body piece' },
+        footwear: { type: Type.STRING, description: 'Shoes' },
+        accessories: { type: Type.ARRAY, items: { type: Type.STRING }, description: 'Accessories' },
+        colorPalette: { type: Type.ARRAY, items: { type: Type.STRING }, description: 'Hex codes' },
+        vibe: { type: Type.STRING, description: 'Style aesthetic' },
       },
       required: ['top', 'bottom', 'footwear', 'accessories', 'colorPalette', 'vibe'],
     },
   };
 
   const connectToAria = async () => {
+    const key = process.env.API_KEY;
+    if (!key) {
+      console.error("API_KEY is not defined in the environment.");
+      setAppState(AppState.ERROR);
+      return;
+    }
+
     try {
       setAppState(AppState.CONNECTING);
       await initAudio();
       
-      // Use process.env.API_KEY directly for Vercel/Vite environment consistency
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+      const ai = new GoogleGenAI({ apiKey: key });
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
       const sessionPromise = ai.live.connect({
@@ -156,7 +161,6 @@ const App: React.FC = () => {
                   const audioData = decode(part.inlineData.data);
                   const ctx = outputAudioContextRef.current!;
                   
-                  // Ensure we are playing at the end of the previous buffer
                   nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
                   const buffer = await decodeAudioData(audioData, ctx, 24000, 1);
                   const source = ctx.createBufferSource();
@@ -180,16 +184,14 @@ const App: React.FC = () => {
             }
 
             if (message.serverContent?.interrupted) {
-              sourcesRef.current.forEach(s => {
-                try { s.stop(); } catch(e) {}
-              });
+              sourcesRef.current.forEach(s => { try { s.stop(); } catch(e) {} });
               sourcesRef.current.clear();
               nextStartTimeRef.current = 0;
               setAppState(AppState.LISTENING);
             }
           },
           onerror: (e) => {
-            console.error("Aria Neural Error:", e);
+            console.error("Gemini Live Error:", e);
             setAppState(AppState.ERROR);
           },
           onclose: () => setAppState(AppState.IDLE)
@@ -197,10 +199,9 @@ const App: React.FC = () => {
         config: {
           responseModalities: [Modality.AUDIO],
           tools: [{ functionDeclarations: [displayOutfitFunctionDeclaration] }],
-          systemInstruction: `You are Aria, a high-end AI fashion designer. 
-          Location: ${location}. Speak with elegance and precision. 
-          Your style is Cyber-Couture. Always call 'displayOutfitSuggestion' when recommending a specific look. 
-          Be bold, futuristic, and encouraging. Focus on the user's personal expression through high fashion.`,
+          systemInstruction: `You are Aria, a high-end AI fashion architect. 
+          Location: ${location}. You specialize in Cyber-Couture. 
+          Speak with high-status elegance. Always call 'displayOutfitSuggestion' when proposing a look.`,
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } }
           },
@@ -210,7 +211,7 @@ const App: React.FC = () => {
 
       sessionRef.current = await sessionPromise;
     } catch (err) {
-      console.error("Initialization failed:", err);
+      console.error("Connection failed:", err);
       setAppState(AppState.ERROR);
     }
   };
@@ -226,10 +227,10 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="relative h-screen w-screen bg-[#050505] overflow-hidden">
+    <div className="relative h-screen w-screen bg-[#050505] overflow-hidden font-sans">
       <AvatarCanvas isSpeaking={appState === AppState.SPEAKING} amplitude={amplitude} />
 
-      {/* Header */}
+      {/* Header UI */}
       <div className="absolute top-0 w-full p-8 flex justify-between items-start z-20 pointer-events-none">
         <div className="pointer-events-auto">
           <h1 className="text-4xl font-black tracking-tighter italic text-white/90">ARIA <span className="text-gold text-sm not-italic font-light ml-2 uppercase tracking-[0.4em]">Designer Unit</span></h1>
@@ -238,26 +239,26 @@ const App: React.FC = () => {
             <span className="text-[10px] text-white/40 uppercase tracking-widest">{appState}</span>
           </div>
         </div>
-        <div className="bg-white/5 backdrop-blur-xl border border-white/10 px-4 py-2 rounded-full flex items-center gap-3 pointer-events-auto">
+        <div className="bg-white/5 backdrop-blur-xl border border-white/10 px-4 py-2 rounded-full flex items-center gap-3 pointer-events-auto shadow-xl">
           <i className="fa-solid fa-location-dot text-gold text-xs"></i>
           <span className="text-[10px] uppercase font-mono text-white/60">{location}</span>
         </div>
       </div>
 
-      {/* Neural Stream (Left) */}
+      {/* Neural Stream UI (Left) */}
       <div className="absolute left-8 top-1/2 -translate-y-1/2 w-80 z-30 pointer-events-none">
         {transcription && (
-          <div className="bg-black/60 backdrop-blur-2xl border-l-2 border-gold p-6 rounded-r-3xl animate-in fade-in slide-in-from-left-4 duration-500 pointer-events-auto shadow-2xl">
+          <div className="bg-black/80 backdrop-blur-3xl border-l-2 border-gold p-6 rounded-r-3xl animate-in fade-in slide-in-from-left-4 duration-500 pointer-events-auto shadow-2xl">
             <span className="text-[9px] uppercase tracking-widest text-gold/60 mb-2 block font-bold">Neural Output Stream</span>
             <p className="text-sm font-light leading-relaxed italic text-white/80">"{transcription}"</p>
           </div>
         )}
       </div>
 
-      {/* Outfit Card (Right) */}
+      {/* Outfit Manifest Card (Right) */}
       {currentOutfit && (
         <div className="absolute right-8 top-1/2 -translate-y-1/2 w-80 z-30 animate-in slide-in-from-right-4 fade-in duration-500">
-          <div className="bg-black/60 backdrop-blur-2xl border border-gold/30 rounded-3xl overflow-hidden shadow-[0_0_40px_rgba(212,175,55,0.1)]">
+          <div className="bg-black/80 backdrop-blur-3xl border border-gold/30 rounded-3xl overflow-hidden shadow-[0_0_50px_rgba(212,175,55,0.15)]">
             <div className="bg-gold/10 px-6 py-4 border-b border-gold/20 flex justify-between items-center">
               <div>
                 <span className="text-[9px] uppercase tracking-widest text-gold font-bold">Outfit Manifest</span>
@@ -266,13 +267,13 @@ const App: React.FC = () => {
               <button onClick={() => setCurrentOutfit(null)} className="text-white/20 hover:text-white transition-colors"><i className="fa-solid fa-xmark"></i></button>
             </div>
             <div className="p-6 space-y-4">
-              <div><span className="text-[9px] text-white/40 uppercase block">Top</span><p className="text-sm font-medium">{currentOutfit.top}</p></div>
-              <div><span className="text-[9px] text-white/40 uppercase block">Bottom</span><p className="text-sm font-medium">{currentOutfit.bottom}</p></div>
-              <div><span className="text-[9px] text-white/40 uppercase block">Footwear</span><p className="text-sm font-medium">{currentOutfit.footwear}</p></div>
+              <div><span className="text-[9px] text-white/40 uppercase block mb-1">Top</span><p className="text-sm font-medium">{currentOutfit.top}</p></div>
+              <div><span className="text-[9px] text-white/40 uppercase block mb-1">Bottom</span><p className="text-sm font-medium">{currentOutfit.bottom}</p></div>
+              <div><span className="text-[9px] text-white/40 uppercase block mb-1">Footwear</span><p className="text-sm font-medium">{currentOutfit.footwear}</p></div>
               <div className="flex flex-wrap gap-2 pt-2">
                 {currentOutfit.accessories.map((a, i) => <span key={i} className="text-[10px] bg-white/5 border border-white/10 px-2 py-1 rounded text-white/60">{a}</span>)}
               </div>
-              <div className="flex gap-1 pt-2 h-1 rounded-full overflow-hidden">
+              <div className="flex gap-1 pt-4 h-1.5 rounded-full overflow-hidden">
                 {currentOutfit.colorPalette.map((c, i) => <div key={i} className="flex-1 h-full" style={{ backgroundColor: c }} />)}
               </div>
             </div>
@@ -280,20 +281,22 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Controls (Bottom) */}
+      {/* Control Panel (Bottom) */}
       <div className="absolute bottom-8 w-full flex flex-col items-center gap-4 z-40 px-8">
         {(appState === AppState.LISTENING || appState === AppState.SPEAKING) && (
-          <div className="flex gap-1 items-end h-8">
-            {Array.from({ length: 20 }).map((_, i) => (
-              <div key={i} className="w-1 bg-cyber rounded-full transition-all duration-75" style={{ height: `${Math.max(10, (appState === AppState.SPEAKING ? amplitude : inputAmplitude) * 100 * (0.5 + Math.random()))}%` }}></div>
+          <div className="flex gap-1 items-end h-10 mb-2">
+            {Array.from({ length: 24 }).map((_, i) => (
+              <div key={i} className="w-1 bg-cyber rounded-full transition-all duration-75 shadow-[0_0_10px_rgba(0,242,255,0.5)]" style={{ height: `${Math.max(15, (appState === AppState.SPEAKING ? amplitude : inputAmplitude) * 100 * (0.4 + Math.random()))}%` }}></div>
             ))}
           </div>
         )}
         
         <div className="w-full max-w-2xl flex gap-3">
           {appState === AppState.IDLE || appState === AppState.ERROR ? (
-            <button onClick={connectToAria} className="w-full bg-gold hover:bg-white text-black font-bold py-5 rounded-2xl transition-all shadow-[0_0_30px_rgba(212,175,55,0.2)] uppercase tracking-widest text-sm active:scale-95">
-              {appState === AppState.ERROR ? "Retry System Handshake" : "Initialize Aria Architect"}
+            <button onClick={connectToAria} className="w-full bg-gold hover:bg-white text-black font-bold py-6 rounded-2xl transition-all shadow-[0_0_40px_rgba(212,175,55,0.3)] uppercase tracking-widest text-sm active:scale-95 group">
+              <span className="group-hover:scale-110 transition-transform inline-block">
+                {appState === AppState.ERROR ? "Reconnect Neural Link" : "Initialize Aria Architect"}
+              </span>
             </button>
           ) : (
             <>
@@ -303,13 +306,13 @@ const App: React.FC = () => {
                   value={userInput}
                   onChange={(e) => setUserInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                  placeholder="Ask Aria to design your look..."
-                  className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 focus:outline-none focus:border-gold transition-colors text-sm"
+                  placeholder="Ask Aria to curate your aesthetic..."
+                  className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-5 focus:outline-none focus:border-gold transition-all text-sm backdrop-blur-md shadow-inner"
                 />
-                <button onClick={handleSendMessage} className="absolute right-4 top-1/2 -translate-y-1/2 text-gold p-2 hover:scale-110 transition-transform"><i className="fa-solid fa-paper-plane"></i></button>
+                <button onClick={handleSendMessage} className="absolute right-5 top-1/2 -translate-y-1/2 text-gold p-2 hover:scale-125 transition-transform"><i className="fa-solid fa-paper-plane"></i></button>
               </div>
-              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center border transition-all ${appState === AppState.SPEAKING ? 'border-gold bg-gold/10' : 'border-white/10 bg-white/5'}`}>
-                {appState === AppState.SPEAKING ? <i className="fa-solid fa-volume-high text-gold animate-pulse"></i> : <i className={`fa-solid fa-microphone ${appState === AppState.LISTENING ? 'text-cyber' : 'text-white/20'}`}></i>}
+              <div className={`w-16 h-16 rounded-2xl flex items-center justify-center border transition-all shadow-xl ${appState === AppState.SPEAKING ? 'border-gold bg-gold/10' : 'border-white/10 bg-white/5'}`}>
+                {appState === AppState.SPEAKING ? <i className="fa-solid fa-volume-high text-gold animate-pulse text-xl"></i> : <i className={`fa-solid fa-microphone text-xl ${appState === AppState.LISTENING ? 'text-cyber' : 'text-white/20'}`}></i>}
               </div>
             </>
           )}
