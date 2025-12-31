@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality, Type, FunctionDeclaration } from '@google/genai';
 import { AvatarCanvas } from './components/AvatarCanvas';
@@ -24,9 +23,12 @@ const App: React.FC = () => {
   const inputAnalyzerRef = useRef<AnalyserNode | null>(null);
 
   const initAudio = async () => {
+    // Standardize initialization for cross-browser support
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    
     if (!audioContextRef.current) {
-      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-      outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      audioContextRef.current = new AudioContextClass({ sampleRate: 16000 });
+      outputAudioContextRef.current = new AudioContextClass({ sampleRate: 24000 });
       
       const outAnalyzer = outputAudioContextRef.current.createAnalyser();
       outAnalyzer.fftSize = 256;
@@ -37,6 +39,10 @@ const App: React.FC = () => {
       inAnalyzer.fftSize = 256;
       inputAnalyzerRef.current = inAnalyzer;
     }
+    
+    // CRITICAL: Resume contexts within the click handler to satisfy browser autoplay policies
+    if (audioContextRef.current.state === 'suspended') await audioContextRef.current.resume();
+    if (outputAudioContextRef.current.state === 'suspended') await outputAudioContextRef.current.resume();
   };
 
   useEffect(() => {
@@ -46,10 +52,10 @@ const App: React.FC = () => {
           try {
             setLocation(`${pos.coords.latitude.toFixed(2)}, ${pos.coords.longitude.toFixed(2)}`);
           } catch (e) {
-            setLocation('Global');
+            setLocation('Global Hub');
           }
         },
-        () => setLocation('Global')
+        () => setLocation('Global Hub')
       );
     }
   }, []);
@@ -66,7 +72,7 @@ const App: React.FC = () => {
         setAmplitude(0);
       }
 
-      if (inputAnalyzerRef.current && appState === AppState.LISTENING) {
+      if (inputAnalyzerRef.current && (appState === AppState.LISTENING || appState === AppState.SPEAKING)) {
         const dataArray = new Uint8Array(inputAnalyzerRef.current.frequencyBinCount);
         inputAnalyzerRef.current.getByteFrequencyData(dataArray);
         const sum = dataArray.reduce((a, b) => a + b, 0);
@@ -86,22 +92,14 @@ const App: React.FC = () => {
     name: 'displayOutfitSuggestion',
     parameters: {
       type: Type.OBJECT,
-      description: 'Generates a structured visual card of a complete outfit suggestion.',
+      description: 'Displays a high-fashion outfit manifest card to the user.',
       properties: {
-        top: { type: Type.STRING, description: 'Details of the upper garment (e.g., "Oversized Charcoal Tech-Hoodie")' },
-        bottom: { type: Type.STRING, description: 'Details of the lower garment (e.g., "Tapered Midnight Cargo Pants")' },
-        footwear: { type: Type.STRING, description: 'Details of shoes (e.g., "Matte White Minimalist Sneakers")' },
-        accessories: { 
-          type: Type.ARRAY, 
-          items: { type: Type.STRING },
-          description: 'A list of 2-3 specific accessories (e.g., "Silver industrial chain", "Clear-frame glasses")' 
-        },
-        colorPalette: { 
-          type: Type.ARRAY, 
-          items: { type: Type.STRING },
-          description: 'A list of hex codes or color names representing the theme (e.g., ["#121212", "#D4AF37", "#FFFFFF"])' 
-        },
-        vibe: { type: Type.STRING, description: 'The stylistic vibe of the outfit (e.g., "Neo-Tokyo Casual", "Corporate Minimalist")' },
+        top: { type: Type.STRING, description: 'Upper body piece (e.g. Chrome-plated bomber jacket)' },
+        bottom: { type: Type.STRING, description: 'Lower body piece (e.g. Pleated iridium trousers)' },
+        footwear: { type: Type.STRING, description: 'Shoes (e.g. Gravity-defying boots)' },
+        accessories: { type: Type.ARRAY, items: { type: Type.STRING }, description: '2-3 futuristic accessories' },
+        colorPalette: { type: Type.ARRAY, items: { type: Type.STRING }, description: 'Colors in hex' },
+        vibe: { type: Type.STRING, description: 'Overall style aesthetic' },
       },
       required: ['top', 'bottom', 'footwear', 'accessories', 'colorPalette', 'vibe'],
     },
@@ -112,7 +110,8 @@ const App: React.FC = () => {
       setAppState(AppState.CONNECTING);
       await initAudio();
       
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      // Use process.env.API_KEY directly for Vercel/Vite environment consistency
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
       const sessionPromise = ai.live.connect({
@@ -142,7 +141,7 @@ const App: React.FC = () => {
                   setCurrentOutfit(fc.args as any as Outfit);
                   sessionPromise.then(session => {
                     session.sendToolResponse({
-                      functionResponses: { id: fc.id, name: fc.name, response: { result: "success" } }
+                      functionResponses: { id: fc.id, name: fc.name, response: { result: "ok" } }
                     });
                   });
                 }
@@ -156,15 +155,19 @@ const App: React.FC = () => {
                   setAppState(AppState.SPEAKING);
                   const audioData = decode(part.inlineData.data);
                   const ctx = outputAudioContextRef.current!;
+                  
+                  // Ensure we are playing at the end of the previous buffer
                   nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
                   const buffer = await decodeAudioData(audioData, ctx, 24000, 1);
                   const source = ctx.createBufferSource();
                   source.buffer = buffer;
                   source.connect(analyzerRef.current!);
+                  
                   source.addEventListener('ended', () => {
                     sourcesRef.current.delete(source);
                     if (sourcesRef.current.size === 0) setAppState(AppState.LISTENING);
                   });
+                  
                   source.start(nextStartTimeRef.current);
                   nextStartTimeRef.current += buffer.duration;
                   sourcesRef.current.add(source);
@@ -173,40 +176,41 @@ const App: React.FC = () => {
             }
 
             if (message.serverContent?.outputTranscription) {
-              const text = message.serverContent.outputTranscription.text;
-              if (text) setTranscription(prev => prev + text);
+              setTranscription(prev => (prev + message.serverContent!.outputTranscription!.text).slice(-500));
             }
 
             if (message.serverContent?.interrupted) {
-              sourcesRef.current.forEach(s => s.stop());
+              sourcesRef.current.forEach(s => {
+                try { s.stop(); } catch(e) {}
+              });
               sourcesRef.current.clear();
               nextStartTimeRef.current = 0;
               setAppState(AppState.LISTENING);
             }
           },
-          onerror: (e) => setAppState(AppState.ERROR),
+          onerror: (e) => {
+            console.error("Aria Neural Error:", e);
+            setAppState(AppState.ERROR);
+          },
           onclose: () => setAppState(AppState.IDLE)
         },
         config: {
           responseModalities: [Modality.AUDIO],
           tools: [{ functionDeclarations: [displayOutfitFunctionDeclaration] }],
-          systemInstruction: `You are 'Aria', a futuristic fashion AI droid. 
-          Your style is "Cyber-Couture". You are an elite stylist.
-          Location: ${location}. 
-          CRITICAL: Whenever you suggest a specific outfit or look, you MUST call the 'displayOutfitSuggestion' tool. 
-          The user wants complete, head-to-toe recommendations. 
-          Always explain the 'why' behind your color and texture choices in your voice response.
-          Make the outfit details futuristic and high-fashion.`,
+          systemInstruction: `You are Aria, a high-end AI fashion designer. 
+          Location: ${location}. Speak with elegance and precision. 
+          Your style is Cyber-Couture. Always call 'displayOutfitSuggestion' when recommending a specific look. 
+          Be bold, futuristic, and encouraging. Focus on the user's personal expression through high fashion.`,
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } }
           },
           outputAudioTranscription: {},
-          inputAudioTranscription: {}
         }
       });
 
       sessionRef.current = await sessionPromise;
     } catch (err) {
+      console.error("Initialization failed:", err);
       setAppState(AppState.ERROR);
     }
   };
@@ -222,179 +226,95 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="relative h-screen w-screen flex flex-col items-center justify-end bg-[#050505] text-white overflow-hidden">
+    <div className="relative h-screen w-screen bg-[#050505] overflow-hidden">
       <AvatarCanvas isSpeaking={appState === AppState.SPEAKING} amplitude={amplitude} />
 
-      {/* Top Header */}
-      <div className="absolute top-0 left-0 w-full p-8 flex justify-between items-start z-20 pointer-events-none">
+      {/* Header */}
+      <div className="absolute top-0 w-full p-8 flex justify-between items-start z-20 pointer-events-none">
         <div className="pointer-events-auto">
-          <h1 className="text-3xl font-bold tracking-tighter text-white/90 italic">ARIA <span className="text-[#d4af37] text-sm not-italic ml-2 font-light">SYSTEM V2.0</span></h1>
-          <div className="flex items-center gap-2 mt-1">
-            <div className={`w-2 h-2 rounded-full ${appState === AppState.IDLE ? 'bg-red-500' : 'bg-green-500 animate-pulse'}`}></div>
-            <p className="text-[10px] uppercase tracking-[0.3em] text-white/40">{appState}</p>
+          <h1 className="text-4xl font-black tracking-tighter italic text-white/90">ARIA <span className="text-gold text-sm not-italic font-light ml-2 uppercase tracking-[0.4em]">Designer Unit</span></h1>
+          <div className="flex items-center gap-2 mt-2">
+            <div className={`w-2 h-2 rounded-full ${appState === AppState.IDLE ? 'bg-red-500' : (appState === AppState.ERROR ? 'bg-orange-500' : 'bg-gold animate-pulse')}`}></div>
+            <span className="text-[10px] text-white/40 uppercase tracking-widest">{appState}</span>
           </div>
         </div>
-        <div className="pointer-events-auto flex flex-col gap-2">
-          <div className="bg-black/40 backdrop-blur-xl px-5 py-3 rounded-2xl border border-white/5 flex items-center gap-3">
-            <i className="fa-solid fa-satellite-dish text-[#00f2ff] text-xs animate-pulse"></i>
-            <span className="text-xs font-mono text-white/60 uppercase tracking-tighter">{location}</span>
-          </div>
+        <div className="bg-white/5 backdrop-blur-xl border border-white/10 px-4 py-2 rounded-full flex items-center gap-3 pointer-events-auto">
+          <i className="fa-solid fa-location-dot text-gold text-xs"></i>
+          <span className="text-[10px] uppercase font-mono text-white/60">{location}</span>
         </div>
       </div>
 
-      {/* LEFT SIDE: Neural Speech Stream (The robot is "talking" here) */}
-      <div className="absolute left-8 top-1/2 -translate-y-1/2 w-80 max-h-[60vh] z-30 flex flex-col gap-4 pointer-events-none">
+      {/* Neural Stream (Left) */}
+      <div className="absolute left-8 top-1/2 -translate-y-1/2 w-80 z-30 pointer-events-none">
         {transcription && (
-          <div className="pointer-events-auto group">
-            <div className="mb-2 flex items-center gap-2 px-2">
-               <div className="w-1 h-1 bg-[#d4af37] rounded-full animate-ping"></div>
-               <span className="text-[9px] uppercase tracking-[0.2em] text-[#d4af37] font-black">AI Voice Processor</span>
-            </div>
-            <div className="bg-black/40 backdrop-blur-3xl border-l-2 border-[#d4af37] p-6 rounded-r-3xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] transition-all duration-500 animate-in fade-in slide-in-from-left-10">
-              <div className="relative">
-                {/* Decorative scanning line */}
-                <div className="absolute -left-6 top-0 bottom-0 w-[1px] bg-gradient-to-b from-transparent via-[#d4af37] to-transparent animate-pulse"></div>
-                
-                <p className="text-sm text-white/95 font-light leading-relaxed tracking-wide italic selection:bg-[#d4af37] selection:text-black">
-                  &ldquo;{transcription}&rdquo;
-                </p>
-                
-                {appState === AppState.SPEAKING && (
-                  <div className="mt-4 flex gap-1">
-                    <div className="w-1 h-1 bg-[#d4af37]/40 rounded-full animate-bounce delay-75"></div>
-                    <div className="w-1 h-1 bg-[#d4af37]/40 rounded-full animate-bounce delay-150"></div>
-                    <div className="w-1 h-1 bg-[#d4af37]/40 rounded-full animate-bounce delay-200"></div>
-                  </div>
-                )}
-              </div>
-            </div>
+          <div className="bg-black/60 backdrop-blur-2xl border-l-2 border-gold p-6 rounded-r-3xl animate-in fade-in slide-in-from-left-4 duration-500 pointer-events-auto shadow-2xl">
+            <span className="text-[9px] uppercase tracking-widest text-gold/60 mb-2 block font-bold">Neural Output Stream</span>
+            <p className="text-sm font-light leading-relaxed italic text-white/80">"{transcription}"</p>
           </div>
         )}
       </div>
 
-      {/* RIGHT SIDE: Outfit Suggestion Display - The Digital Loom */}
+      {/* Outfit Card (Right) */}
       {currentOutfit && (
-        <div className="absolute top-1/2 -translate-y-1/2 right-8 w-80 z-30 animate-in slide-in-from-right-10 fade-in duration-500">
-          <div className="bg-black/40 backdrop-blur-3xl border border-[#d4af37]/30 rounded-3xl overflow-hidden shadow-[0_0_50px_rgba(212,175,55,0.15)]">
-            <div className="bg-[#d4af37]/10 px-6 py-4 border-b border-[#d4af37]/20 flex justify-between items-center">
+        <div className="absolute right-8 top-1/2 -translate-y-1/2 w-80 z-30 animate-in slide-in-from-right-4 fade-in duration-500">
+          <div className="bg-black/60 backdrop-blur-2xl border border-gold/30 rounded-3xl overflow-hidden shadow-[0_0_40px_rgba(212,175,55,0.1)]">
+            <div className="bg-gold/10 px-6 py-4 border-b border-gold/20 flex justify-between items-center">
               <div>
-                <span className="text-[10px] uppercase tracking-[0.3em] text-[#d4af37] font-bold">Outfit Manifest</span>
-                <h2 className="text-xl font-bold tracking-tight mt-1">{currentOutfit.vibe}</h2>
+                <span className="text-[9px] uppercase tracking-widest text-gold font-bold">Outfit Manifest</span>
+                <h2 className="text-xl font-bold tracking-tight">{currentOutfit.vibe}</h2>
               </div>
-              <button onClick={() => setCurrentOutfit(null)} className="text-white/20 hover:text-white transition-colors">
-                <i className="fa-solid fa-xmark"></i>
-              </button>
+              <button onClick={() => setCurrentOutfit(null)} className="text-white/20 hover:text-white transition-colors"><i className="fa-solid fa-xmark"></i></button>
             </div>
-            
             <div className="p-6 space-y-4">
-              <div className="space-y-1">
-                <span className="text-[9px] uppercase tracking-widest text-white/40">Upper Body</span>
-                <p className="text-sm font-medium text-white/90">{currentOutfit.top}</p>
+              <div><span className="text-[9px] text-white/40 uppercase block">Top</span><p className="text-sm font-medium">{currentOutfit.top}</p></div>
+              <div><span className="text-[9px] text-white/40 uppercase block">Bottom</span><p className="text-sm font-medium">{currentOutfit.bottom}</p></div>
+              <div><span className="text-[9px] text-white/40 uppercase block">Footwear</span><p className="text-sm font-medium">{currentOutfit.footwear}</p></div>
+              <div className="flex flex-wrap gap-2 pt-2">
+                {currentOutfit.accessories.map((a, i) => <span key={i} className="text-[10px] bg-white/5 border border-white/10 px-2 py-1 rounded text-white/60">{a}</span>)}
               </div>
-              <div className="space-y-1">
-                <span className="text-[9px] uppercase tracking-widest text-white/40">Lower Body</span>
-                <p className="text-sm font-medium text-white/90">{currentOutfit.bottom}</p>
-              </div>
-              <div className="space-y-1">
-                <span className="text-[9px] uppercase tracking-widest text-white/40">Footwear</span>
-                <p className="text-sm font-medium text-white/90">{currentOutfit.footwear}</p>
-              </div>
-              
-              <div className="space-y-2 pt-2">
-                <span className="text-[9px] uppercase tracking-widest text-white/40">Accessories</span>
-                <div className="flex flex-wrap gap-2">
-                  {currentOutfit.accessories.map((acc, i) => (
-                    <span key={i} className="text-[10px] bg-white/5 border border-white/10 px-2 py-1 rounded-md text-white/70">
-                      {acc}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-2 pt-2 border-t border-white/5">
-                <span className="text-[9px] uppercase tracking-widest text-white/40">Color Palette</span>
-                <div className="flex gap-2">
-                  {currentOutfit.colorPalette.map((color, i) => (
-                    <div 
-                      key={i} 
-                      className="w-full h-4 rounded-sm border border-white/10" 
-                      style={{ backgroundColor: color }}
-                      title={color}
-                    ></div>
-                  ))}
-                </div>
+              <div className="flex gap-1 pt-2 h-1 rounded-full overflow-hidden">
+                {currentOutfit.colorPalette.map((c, i) => <div key={i} className="flex-1 h-full" style={{ backgroundColor: c }} />)}
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* BOTTOM UI: Controls & Neural Input Meter */}
-      <div className="relative z-40 w-full max-w-4xl p-6 mb-4 flex flex-col gap-4">
-        
-        {/* User Voice Input Meter */}
-        {appState === AppState.LISTENING && (
-          <div className="flex flex-col items-center gap-1 mb-2 animate-in fade-in slide-in-from-bottom-2">
-            <span className="text-[9px] uppercase tracking-widest text-[#00f2ff]/60 font-bold">Mic Active • Scanning Neural Pattern</span>
-            <div className="flex gap-0.5 h-1.5 w-64 bg-white/5 rounded-full overflow-hidden p-0 border border-white/10">
-              {Array.from({ length: 32 }).map((_, i) => (
-                <div 
-                  key={i}
-                  className={`flex-1 transition-all duration-75 ${i / 32 < inputAmplitude * 2 ? 'bg-[#00f2ff]' : 'bg-white/5'}`}
-                  style={{ opacity: 0.3 + (i / 32) }}
-                ></div>
-              ))}
-            </div>
+      {/* Controls (Bottom) */}
+      <div className="absolute bottom-8 w-full flex flex-col items-center gap-4 z-40 px-8">
+        {(appState === AppState.LISTENING || appState === AppState.SPEAKING) && (
+          <div className="flex gap-1 items-end h-8">
+            {Array.from({ length: 20 }).map((_, i) => (
+              <div key={i} className="w-1 bg-cyber rounded-full transition-all duration-75" style={{ height: `${Math.max(10, (appState === AppState.SPEAKING ? amplitude : inputAmplitude) * 100 * (0.5 + Math.random()))}%` }}></div>
+            ))}
           </div>
         )}
-
-        {/* Input Bar */}
-        <div className="flex items-stretch gap-3">
+        
+        <div className="w-full max-w-2xl flex gap-3">
           {appState === AppState.IDLE || appState === AppState.ERROR ? (
-            <button 
-              onClick={connectToAria}
-              className="w-full bg-[#d4af37] hover:bg-white text-black font-black py-5 rounded-2xl transition-all transform active:scale-95 flex items-center justify-center gap-3 shadow-[0_0_30px_rgba(212,175,55,0.3)] group"
-            >
-              <i className="fa-solid fa-bolt-lightning group-hover:scale-125 transition-transform"></i>
-              INITIALIZE AI STYLIST
+            <button onClick={connectToAria} className="w-full bg-gold hover:bg-white text-black font-bold py-5 rounded-2xl transition-all shadow-[0_0_30px_rgba(212,175,55,0.2)] uppercase tracking-widest text-sm active:scale-95">
+              {appState === AppState.ERROR ? "Retry System Handshake" : "Initialize Aria Architect"}
             </button>
           ) : (
             <>
-              <div className="flex-1 relative group">
+              <div className="flex-1 relative">
                 <input 
                   type="text" 
                   value={userInput}
                   onChange={(e) => setUserInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                  placeholder="Describe your destination or style needs..."
-                  className="w-full h-full bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl px-6 py-4 focus:outline-none focus:border-[#d4af37] focus:ring-1 focus:ring-[#d4af37]/20 text-sm transition-all group-hover:bg-white/10 placeholder:text-white/20"
+                  placeholder="Ask Aria to design your look..."
+                  className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 focus:outline-none focus:border-gold transition-colors text-sm"
                 />
-                <button 
-                  onClick={handleSendMessage}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 text-[#d4af37] hover:scale-125 transition-transform p-2"
-                >
-                  <i className="fa-solid fa-paper-plane"></i>
-                </button>
+                <button onClick={handleSendMessage} className="absolute right-4 top-1/2 -translate-y-1/2 text-gold p-2 hover:scale-110 transition-transform"><i className="fa-solid fa-paper-plane"></i></button>
               </div>
-              
-              <div className={`flex items-center justify-center w-16 rounded-2xl bg-black/40 border border-white/10 transition-all ${appState === AppState.SPEAKING ? 'border-[#d4af37] shadow-[0_0_15px_rgba(212,175,55,0.2)]' : ''}`}>
-                 {appState === AppState.SPEAKING ? (
-                    <div className="flex items-center gap-1">
-                      <div className="w-1 h-3 bg-[#d4af37] rounded-full animate-[bounce_1s_infinite]"></div>
-                      <div className="w-1 h-5 bg-[#d4af37] rounded-full animate-[bounce_0.8s_infinite]"></div>
-                      <div className="w-1 h-3 bg-[#d4af37] rounded-full animate-[bounce_1.2s_infinite]"></div>
-                    </div>
-                 ) : (
-                   <i className={`fa-solid ${appState === AppState.LISTENING ? 'fa-microphone animate-pulse text-[#00f2ff]' : 'fa-microphone-slash text-white/20'}`}></i>
-                 )}
+              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center border transition-all ${appState === AppState.SPEAKING ? 'border-gold bg-gold/10' : 'border-white/10 bg-white/5'}`}>
+                {appState === AppState.SPEAKING ? <i className="fa-solid fa-volume-high text-gold animate-pulse"></i> : <i className={`fa-solid fa-microphone ${appState === AppState.LISTENING ? 'text-cyber' : 'text-white/20'}`}></i>}
               </div>
             </>
           )}
         </div>
       </div>
-      
-      {/* Decorative footer line */}
-      <div className="w-full h-[1px] bg-gradient-to-r from-transparent via-[#d4af37]/30 to-transparent opacity-50"></div>
     </div>
   );
 };
